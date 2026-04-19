@@ -1,0 +1,15 @@
+# Python virtual environments
+llm_ddos/
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+*.csv
+*.zip
+*.gz
+data/
