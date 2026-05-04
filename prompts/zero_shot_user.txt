@@ -1,0 +1,5 @@
+Classify the following IoT network flow.
+
+{serialized_features}
+
+Follow the required JSON schema from the system message. Use at least five reasoning steps.

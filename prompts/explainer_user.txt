@@ -1,0 +1,12 @@
+Model: {model_name}
+Predicted class: {predicted_class}
+Confidence (predicted class probability): {confidence:.4f}
+
+{ground_truth_section}
+Class probabilities:
+{probability_lines}
+
+Context — serialized flow (subset + highlights):
+{serialized_features}
+
+Produce the JSON object described in the system message.

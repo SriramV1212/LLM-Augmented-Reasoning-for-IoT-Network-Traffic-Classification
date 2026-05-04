@@ -3,6 +3,9 @@ llm_ddos/
 .venv/
 venv/
 
+# Secrets
+.env
+
 # Jupyter
 .ipynb_checkpoints/
 
@@ -12,7 +15,6 @@ venv/
 *.csv
 *.zip
 *.gz
-data/
 
 # Claude Code
 .claude/

@@ -1,0 +1,124 @@
+{
+  "classification_mode": "ml_agent",
+  "n_rows": 4,
+  "ml_accuracy": 1.0,
+  "ml_macro_f1": 1.0,
+  "ml_classification_report": {
+    "BENIGN": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 1.0
+    },
+    "DDOS_UDP": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 1.0
+    },
+    "DOS_TCP": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 1.0
+    },
+    "RECON": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 1.0
+    },
+    "accuracy": 1.0,
+    "macro avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 4.0
+    },
+    "weighted avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 4.0
+    }
+  },
+  "ml_confusion_matrix": [
+    [
+      1,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      1,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      1
+    ]
+  ],
+  "zeroshot_accuracy": null,
+  "zeroshot_macro_f1": null,
+  "zeroshot_classification_report": null,
+  "zeroshot_confusion_matrix": null,
+  "labels": [
+    "BENIGN",
+    "DDOS_UDP",
+    "DOS_TCP",
+    "RECON"
+  ],
+  "ml_agent_llm_explainer_samples": [
+    {
+      "row_index": 0,
+      "true_label": "DOS_TCP",
+      "ml_prediction": "DOS_TCP",
+      "llm_model": "openai/gpt-oss-120b:free",
+      "plausibility": "The model correctly predicts DOS_TCP, matching the ground\u2011truth label, but the agreement feels counterintuitive: the flow shows only 9 forward packets, zero backward packets, no SYN or ACK flags, and a packet rate of 0.076\u202fpackets/s, which is not the high\u2011frequency, flag\u2011heavy pattern typical of TCP\u2011based DoS attacks.",
+      "explanation": "The flow lasted an extreme **Flow Duration** of 1.173e+08\u202f\u00b5s (\u224832.5\u202fh) while transmitting virtually no data (Flow Bytes/s\u202f=\u202f0, Total Length of Fwd Packet\u202f=\u202f0). Inter\u2011arrival times are huge, with **Fwd IAT Total** also 1.173e+08\u202f\u00b5s and **Fwd IAT Max** of 1.832e+07\u202f\u00b5s, indicating long pauses between the nine packets. The traffic is completely unidirectional (**Total Bwd packets**\u202f=\u202f0) and lacks any TCP control flags (**SYN Flag Count**\u202f=\u202f0, **ACK Flag Count**\u202f=\u202f0), suggesting a low\u2011volume, idle\u2011time\u2011dominated flow rather than a bursty DoS pattern.",
+      "security_takeaway": "Flag any long\u2011duration TCP flows with zero backward packets and negligible payload (e.g., monitor flows where Flow Duration > 1e8\u202f\u00b5s and Flow Bytes/s \u2248 0) for further investigation.",
+      "rule_based_summary": "The model assigns **DOS_TCP** with 100.0% estimated probability (argmax over four classes).\nFull class distribution: DOS_TCP 100.0%, DDOS_UDP 0.0%, BENIGN 0.0%, RECON 0.0%.\nThe features below had the largest SHAP influence on the score for the predicted class (**DOS_TCP**). Values shown are the original flow statistics; SHAP is computed in log1p-sign feature space.\n- **Fwd IAT Min**: raw value \u2248 3.44548e+06; SHAP = 0.0990728 (increased support for the predicted class).\n- **ACK Flag Count**: raw value \u2248 0; SHAP = 0.0908524 (increased support for the predicted class).\n- **Flow IAT Min**: raw value \u2248 3.44548e+06; SHAP = 0.0553047 (increased support for the predicted class).\n- **Packet Length Max**: raw value \u2248 0; SHAP = 0.0367146 (increased support for the predicted class).\n- **Flow Bytes/s**: raw value \u2248 0; SHAP = 0.0344982 (increased support for the predicted class).\n- **Fwd Header Length**: raw value \u2248 180; SHAP = 0.0323693 (increased support for the predicted class).\n- **PSH Flag Count**: raw value \u2248 0; SHAP = 0.0292881 (increased support for the predicted class).\n- **Average Packet Size**: raw value \u2248 0; SHAP = 0.0281979 (increased support for the predicted class).\n- **Packet Length Mean**: raw value \u2248 0; SHAP = 0.0261187 (increased support for the predicted class).\n- **Fwd IAT Total**: raw value \u2248 1.17256e+08; SHAP = 0.0256145 (increased support for the predicted class)."
+    },
+    {
+      "row_index": 1,
+      "true_label": "DDOS_UDP",
+      "ml_prediction": "DDOS_UDP",
+      "llm_model": "openai/gpt-oss-120b:free",
+      "plausibility": "The model correctly predicts DDOS_UDP, matching the ground\u2011truth label, but the agreement feels counterintuitive: the flow uses Protocol\u202f=\u202f6 (TCP) on port\u202f443, contains only 2 forward packets, zero backward packets, and reports zero bytes transferred, which does not resemble a typical high\u2011rate UDP flood.",
+      "explanation": "The Flow Duration is 7.828e+06\u202f\u00b5s (\u22487.8\u202fs) while both Flow IAT Mean and Idle Mean are the same huge value, indicating a single long pause between the two packets. Total Fwd Packet = 2 and Total Bwd packets = 0 show a strictly unidirectional exchange. The RST Flag Count = 2 suggests the remote side reset the connection, and Flow Packets/s = 0.255495 reflects a very low packet rate. Together these numbers point to a sparse, idle TCP flow rather than a rapid UDP flood.",
+      "security_takeaway": "Flag any long\u2011duration, unidirectional flows with zero backward packets and unusually high idle times for further inspection, especially on privileged ports like 443.",
+      "rule_based_summary": "The model assigns **DDOS_UDP** with 99.1% estimated probability (argmax over four classes).\nFull class distribution: DDOS_UDP 99.1%, DOS_TCP 0.5%, BENIGN 0.4%, RECON 0.0%.\nThe features below had the largest SHAP influence on the score for the predicted class (**DDOS_UDP**). Values shown are the original flow statistics; SHAP is computed in log1p-sign feature space.\n- **Flow Duration**: raw value \u2248 7.82796e+06; SHAP = 0.0962232 (increased support for the predicted class).\n- **Fwd IAT Total**: raw value \u2248 7.82796e+06; SHAP = 0.0766125 (increased support for the predicted class).\n- **Fwd Header Length**: raw value \u2248 40; SHAP = 0.0715706 (increased support for the predicted class).\n- **Idle Std**: raw value \u2248 0; SHAP = 0.0537245 (increased support for the predicted class).\n- **ACK Flag Count**: raw value \u2248 2; SHAP = 0.0516089 (increased support for the predicted class).\n- **Total Fwd Packet**: raw value \u2248 2; SHAP = 0.0443239 (increased support for the predicted class).\n- **RST Flag Count**: raw value \u2248 2; SHAP = 0.0344387 (increased support for the predicted class).\n- **Fwd IAT Std**: raw value \u2248 0; SHAP = 0.0255304 (increased support for the predicted class).\n- **Bwd Init Win Bytes**: raw value \u2248 0; SHAP = 0.0240778 (increased support for the predicted class).\n- **Dst Port**: raw value \u2248 443; SHAP = 0.0232184 (increased support for the predicted class)."
+    },
+    {
+      "row_index": 2,
+      "true_label": "RECON",
+      "ml_prediction": "RECON",
+      "llm_model": "openai/gpt-oss-120b:free",
+      "plausibility": "The model correctly predicts RECON, matching the ground\u2011truth label, and the agreement feels intuitive: the flow consists of exactly two packets (Total Fwd Packet\u202f=\u202f1, Total Bwd packets\u202f=\u202f1) spread over a very long duration (Flow Duration\u202f=\u202f290741\u202f\u00b5s) with a low packet rate (Flow Packets/s\u202f\u2248\u202f6.88). Such sparse, long\u2011lived handshakes are typical of scanning or reconnaissance activity.",
+      "explanation": "The flow shows a single forward packet and a single backward packet (Total Fwd Packet\u202f=\u202f1, Total Bwd packets\u202f=\u202f1) with a SYN flag (SYN Flag Count\u202f=\u202f1) and an RST flag (RST Flag Count\u202f=\u202f1), suggesting a connection attempt that was immediately reset. The inter\u2011arrival time statistics are all equal to the flow duration (Flow IAT Mean\u202f=\u202f290741, Flow IAT Max\u202f=\u202f290741, Flow IAT Min\u202f=\u202f290741), indicating the two packets were far apart in time. Both forward and backward byte counters are zero (Total Length of Fwd Packet\u202f=\u202f0, Total Length of Bwd Packet\u202f=\u202f0), meaning no payload was exchanged, a pattern common in port probes.\n\n**Flow evidence for predicted class `RECON`** (confidence 100.0%; raw CICFlowMeter units):\n- **Flow Duration**: raw \u2248 290741.\n- **Flow IAT Mean**: raw \u2248 290741.\n- **Flow IAT Max**: raw \u2248 290741.\n- **Flow IAT Min**: raw \u2248 290741.\n- **Src Port**: raw \u2248 64332.",
+      "security_takeaway": "Monitor flows with extremely low packet counts but long durations and mixed SYN/RST flags, especially those with zero payload bytes, as they may indicate ongoing reconnaissance scans.",
+      "rule_based_summary": "The model assigns **RECON** with 100.0% estimated probability (argmax over four classes).\nFull class distribution: RECON 100.0%, DDOS_UDP 0.0%, BENIGN 0.0%, DOS_TCP 0.0%.\nThe features below had the largest SHAP influence on the score for the predicted class (**RECON**). Values shown are the original flow statistics; SHAP is computed in log1p-sign feature space.\n- **Fwd Header Length**: raw value \u2248 20; SHAP = 0.102701 (increased support for the predicted class).\n- **Bwd Init Win Bytes**: raw value \u2248 1024; SHAP = 0.0426104 (increased support for the predicted class).\n- **FWD Init Win Bytes**: raw value \u2248 0; SHAP = 0.0401386 (increased support for the predicted class).\n- **Flow Bytes/s**: raw value \u2248 0; SHAP = 0.0399822 (increased support for the predicted class).\n- **Bwd Packets/s**: raw value \u2248 3.43949; SHAP = 0.0361129 (increased support for the predicted class).\n- **Total Fwd Packet**: raw value \u2248 1; SHAP = 0.0337224 (increased support for the predicted class).\n- **Flow Duration**: raw value \u2248 290741; SHAP = 0.0325483 (increased support for the predicted class).\n- **ACK Flag Count**: raw value \u2248 1; SHAP = 0.0308764 (increased support for the predicted class).\n- **Flow IAT Std**: raw value \u2248 0; SHAP = 0.028874 (increased support for the predicted class).\n- **Fwd IAT Min**: raw value \u2248 0; SHAP = 0.0279939 (increased support for the predicted class)."
+    },
+    {
+      "row_index": 3,
+      "true_label": "BENIGN",
+      "ml_prediction": "BENIGN",
+      "llm_model": "openai/gpt-oss-120b:free",
+      "plausibility": "The RandomForest model correctly predicts BENIGN, matching the ground\u2011truth label. This agreement is intuitive: the flow lasts 1.16e+08\u202f\u00b5s (\u2248116\u202fseconds) but only 34 forward and 34 backward packets were seen, yielding a very low Flow Packets/s of 0.586 and Flow Bytes/s of 5.76, which are typical of idle or keep\u2011alive traffic rather than an attack.",
+      "explanation": "The Flow Duration of 1.160e+08\u202f\u00b5s indicates a long\u2011lived session, yet Total Fwd Packet = 34 and Total Bwd packets = 34 show minimal data exchange. The inter\u2011arrival statistics are huge (Fwd IAT Mean = 3.515e+06\u202f\u00b5s, Bwd IAT Mean = 3.515e+06\u202f\u00b5s) confirming sparse packet timing. SYN Flag Count is 0 while ACK Flag Count = 68, suggesting the flow is already established and only acknowledging traffic, consistent with a benign keep\u2011alive or MQTT (Dst Port 1883) session. PSH Flag Count = 34 and very small packet sizes (Fwd Packet Length Mean = 19.53\u202fbytes, Packet Length Max = 22\u202fbytes) further point to low\u2011volume payloads.\n\n**Flow evidence for predicted class `BENIGN`** (confidence 100.0%; raw CICFlowMeter units):\n- **Flow Duration**: raw \u2248 1.16001e+08.\n- **Fwd IAT Total**: raw \u2248 1.16001e+08.\n- **Bwd IAT Total**: raw \u2248 1.16001e+08.\n- **Fwd IAT Max**: raw \u2248 4.00589e+06.\n- **Bwd IAT Max**: raw \u2248 4.00588e+06.",
+      "security_takeaway": "Monitor the Flow Packets/s metric; values consistently below 1\u202fpacket/s for long\u2011duration flows on port 1883 are likely benign, but a sudden increase could indicate misuse.",
+      "rule_based_summary": "The model assigns **BENIGN** with 100.0% estimated probability (argmax over four classes).\nFull class distribution: BENIGN 100.0%, DDOS_UDP 0.0%, DOS_TCP 0.0%, RECON 0.0%.\nThe features below had the largest SHAP influence on the score for the predicted class (**BENIGN**). Values shown are the original flow statistics; SHAP is computed in log1p-sign feature space.\n- **Fwd IAT Min**: raw value \u2248 1045; SHAP = 0.053734 (increased support for the predicted class).\n- **Flow Duration**: raw value \u2248 1.16001e+08; SHAP = 0.0493819 (increased support for the predicted class).\n- **Flow Bytes/s**: raw value \u2248 5.75858; SHAP = 0.049318 (increased support for the predicted class).\n- **Fwd IAT Total**: raw value \u2248 1.16001e+08; SHAP = 0.0471457 (increased support for the predicted class).\n- **ACK Flag Count**: raw value \u2248 68; SHAP = 0.0385036 (increased support for the predicted class).\n- **Packet Length Max**: raw value \u2248 22; SHAP = 0.0313405 (increased support for the predicted class).\n- **Average Packet Size**: raw value \u2248 10.1471; SHAP = 0.0297729 (increased support for the predicted class).\n- **PSH Flag Count**: raw value \u2248 34; SHAP = 0.0276779 (increased support for the predicted class).\n- **Packet Length Mean**: raw value \u2248 10; SHAP = 0.0251111 (increased support for the predicted class).\n- **Flow IAT Min**: raw value \u2248 11; SHAP = 0.0244621 (increased support for the predicted class)."
+    }
+  ],
+  "ml_agent_llm_explainer_note": "OpenRouter SHAP explainer on first 4 row(s); metrics use all 4 rows."
+}
