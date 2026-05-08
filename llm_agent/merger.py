@@ -29,6 +29,7 @@ def _zeroshot_dict(z: ZeroShotResult) -> Dict[str, Any]:
     return {
         "prediction": z.predicted_class,
         "confidence": z.confidence,
+        "plausibility": z.plausibility,
         "reasoning_steps": z.reasoning_steps,
         "short_rationale": z.short_rationale,
         "llm_model": z.model,
@@ -65,7 +66,7 @@ def merge_results(
     """
     One classification path per call:
 
-    - ``ml_agent``: ML prediction + SHAP (+ optional LLM narrative). ``tb`` required.
+    - ``ml_agent``: ML prediction + optional LLM narrative (+ separate SHAP-backed artifacts on ``tb``). ``tb`` required.
     - ``zeroshot``: LLM-only label + chain-of-thought. ``zs`` required.
     """
     _ = config  # reserved for future options
@@ -79,7 +80,7 @@ def merge_results(
         if tb is None:
             raise ValueError("ml_agent mode requires a TrackBResult (ML path).")
         final = tb.prediction.predicted_class
-        notes = "ML + agent mode: tree model prediction with SHAP-grounded explanation."
+        notes = "ML + agent mode: tree model prediction with optional LLM narrative (SHAP summary may appear separately)."
     elif classification_mode == "zeroshot":
         if zs is None:
             raise ValueError("zeroshot mode requires a ZeroShotResult (LLM path).")

@@ -324,3 +324,80 @@ def _save_xgb_shap_plot(
     path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(path, dpi=150)
     plt.close(fig)
+
+
+def get_sgkf_first_fold_indices(
+    data_dir: Path,
+    *,
+    random_state: int = RANDOM_STATE_DEFAULT,
+    sgkf_n_splits: int = 4,
+    dos_tcp_nrows: int = 100_000,
+) -> Tuple[pd.DataFrame, List[str], np.ndarray, np.ndarray]:
+    """
+    Same grouping split as ``ml_classifier.ipynb`` / ``train_and_save_artifacts``:
+
+    ``StratifiedGroupKFold(n_splits=sgkf_n_splits, shuffle=True, random_state=random_state)``
+    on ``groups=Flow ID``, **first fold** → ``train_idx``, ``test_idx``.
+    """
+    df = load_combined_dataframe(data_dir, dos_tcp_nrows=dos_tcp_nrows)
+    df, feature_cols = preprocess_dataframe(df)
+    groups = df["Flow ID"].values
+    X = df[feature_cols].values.astype(float)
+    le = LabelEncoder()
+    y = le.fit_transform(df["Label"].values)
+    sgkf = StratifiedGroupKFold(n_splits=sgkf_n_splits, shuffle=True, random_state=random_state)
+    train_idx, test_idx = next(sgkf.split(X, y, groups=groups))
+    return df, feature_cols, train_idx, test_idx
+
+
+def export_sgkf_test_csv(
+    *,
+    data_dir: Path,
+    output_csv: Path,
+    random_state: int = RANDOM_STATE_DEFAULT,
+    sgkf_n_splits: int = 4,
+    dos_tcp_nrows: int = 100_000,
+    models_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """
+    Write **raw** test-fold rows (``feature_cols`` + ``Label``) for ``cli.py evaluate``.
+
+    Matches notebook preprocessing and split only when ``dos_tcp_nrows`` / seed / splits match training.
+    """
+    df, feature_cols, train_idx, test_idx = get_sgkf_first_fold_indices(
+        data_dir,
+        random_state=random_state,
+        sgkf_n_splits=sgkf_n_splits,
+        dos_tcp_nrows=dos_tcp_nrows,
+    )
+
+    if models_dir is not None:
+        fc_path = Path(models_dir) / "feature_cols.joblib"
+        if fc_path.is_file():
+            saved_cols: List[str] = list(joblib.load(fc_path))
+            if saved_cols != feature_cols:
+                raise ValueError(
+                    "feature_cols.joblib does not match current preprocessing column order/content. "
+                    "Train with matching --data-dir and --dos-tcp-rows, or export with "
+                    "`--no-check-models` (not recommended)."
+                )
+
+    out_df = df.iloc[test_idx][feature_cols + ["Label"]].copy()
+    output_csv = Path(output_csv)
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    out_df.to_csv(output_csv, index=False)
+
+    meta_path = output_csv.with_suffix(".meta.json")
+    record = {
+        "output_csv": str(output_csv.resolve()),
+        "n_test_rows": int(len(test_idx)),
+        "n_train_rows": int(len(train_idx)),
+        "random_state": random_state,
+        "sgkf_n_splits": sgkf_n_splits,
+        "dos_tcp_nrows": dos_tcp_nrows,
+        "n_feature_columns": len(feature_cols),
+        "notebook_alignment": "StratifiedGroupKFold first fold; shuffle=True; group=Flow ID",
+    }
+    meta_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    record["meta_json"] = str(meta_path.resolve())
+    return record

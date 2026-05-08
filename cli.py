@@ -7,6 +7,21 @@ import argparse
 import json
 import logging
 import sys
+import warnings
+
+
+def _suppress_noisy_sklearn_parallel_warnings() -> None:
+    """RF/XGB use ``n_jobs=-1``; sklearn emits repetitive hints about joblib worker config."""
+    warnings.filterwarnings("ignore", category=UserWarning, module=r"sklearn\.utils\.parallel")
+    for cat in (UserWarning, FutureWarning):
+        warnings.filterwarnings(
+            "ignore",
+            message=r"(?s).*propagate.*scikit-learn configuration.*",
+            category=cat,
+        )
+
+
+_suppress_noisy_sklearn_parallel_warnings()
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -196,7 +211,8 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         console.print("[red]OPENROUTER_API_KEY required for zeroshot evaluation.[/red]")
         return 2
 
-    use_llm_explainer = mode == "ml_agent" and not getattr(args, "no_llm_explainer", False)
+    store_samples = not getattr(args, "no_llm_explainer", False)
+    use_ml_explainer = mode == "ml_agent" and store_samples
     summary = evaluate_csv(
         Path(args.dataset),
         cfg,
@@ -206,8 +222,9 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         classification_mode=mode,
         ml_backend=args.ml_backend,
         llm_model=args.model,
-        llm_explainer=use_llm_explainer,
+        llm_explainer=use_ml_explainer,
         explain_max_rows=int(getattr(args, "explain_max_rows", 25) or 0),
+        store_eval_samples=store_samples,
     )
     out_json = Path(args.output)
     out_md = out_json.with_suffix(".md")
@@ -308,6 +325,81 @@ def cmd_train(args: argparse.Namespace) -> int:
             f"  XGB — accuracy: {result.xgb_accuracy:.4f}  macro-F1: {result.xgb_macro_f1:.4f}"
         )
     console.print(f"  Artifacts: {result.output_dir}")
+    return 0
+
+
+def cmd_export_test_split(args: argparse.Namespace) -> int:
+    """Export notebook-aligned SGKF test fold as CSV for batch evaluate (same seed/split as train)."""
+    from llm_agent.train_ml import export_sgkf_test_csv
+
+    data_dir = Path(args.data_dir)
+    required = (
+        "Benign Traffic.csv",
+        "DDoS UDP Flood.csv",
+        "DoS TCP Flood.csv",
+        "Recon Port Scan.csv",
+    )
+    missing = [name for name in required if not (data_dir / name).is_file()]
+    if missing:
+        console.print(
+            f"[red]Missing CSV(s) in {data_dir.resolve()}:[/red]\n"
+            + "\n".join(f"  - {m}" for m in missing)
+        )
+        return 2
+
+    models_dir = None if getattr(args, "no_check_models", False) else Path(args.models_dir)
+    try:
+        meta = export_sgkf_test_csv(
+            data_dir=data_dir,
+            output_csv=Path(args.output),
+            random_state=args.seed,
+            sgkf_n_splits=args.sgkf_splits,
+            dos_tcp_nrows=args.dos_tcp_rows,
+            models_dir=models_dir,
+        )
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        return 2
+    except Exception:
+        console.print("[red]Export failed:[/red]")
+        console.print_exception()
+        return 1
+
+    console.print("[green]Wrote test-split CSV[/green] " + meta["output_csv"])
+    console.print(f"  Test rows: {meta['n_test_rows']}  (train fold rows: {meta['n_train_rows']})")
+    console.print(f"  Meta: {meta['meta_json']}")
+    return 0
+
+
+def cmd_sample_eval_subset(args: argparse.Namespace) -> int:
+    """Stratified sample from a labeled evaluate CSV (balanced classes)."""
+    from llm_agent.sample_eval_subset import stratified_sample_for_eval
+
+    inp = Path(args.input)
+    if not inp.is_file():
+        console.print(f"[red]Input CSV not found:[/red] {inp.resolve()}")
+        return 2
+    try:
+        meta = stratified_sample_for_eval(
+            inp,
+            Path(args.output),
+            models_dir=Path(args.models_dir),
+            per_class=args.per_class,
+            seed=args.seed,
+            write_meta=not getattr(args, "no_meta", False),
+        )
+    except (FileNotFoundError, ValueError) as e:
+        console.print(f"[red]{e}[/red]")
+        return 2
+    except Exception:
+        console.print("[red]Sampling failed:[/red]")
+        console.print_exception()
+        return 1
+
+    console.print("[green]Wrote stratified eval subset[/green] " + meta["output_csv"])
+    console.print(f"  Rows: {meta['total_rows_written']}  (requested {meta['per_class_requested']} per class)")
+    if meta.get("meta_json"):
+        console.print(f"  Meta: {meta['meta_json']}")
     return 0
 
 
@@ -428,7 +520,8 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
             console.print("[red]OPENROUTER_API_KEY required for zeroshot evaluation step.[/red]")
             return 2
 
-        use_expl = mode_ev == "ml_agent" and not getattr(args, "no_llm_explainer", False)
+        store_samples = not getattr(args, "no_llm_explainer", False)
+        use_ml_explainer = mode_ev == "ml_agent" and store_samples
         summary = evaluate_csv(
             Path(args.eval_dataset),
             cfg,
@@ -438,8 +531,9 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
             classification_mode=mode_ev,
             ml_backend=args.ml_backend,
             llm_model=args.model,
-            llm_explainer=use_expl,
+            llm_explainer=use_ml_explainer,
             explain_max_rows=int(getattr(args, "explain_max_rows", 25) or 0),
+            store_eval_samples=store_samples,
         )
         ev_out = Path(args.eval_output)
         write_eval_artifacts(summary, ev_out, ev_out.with_suffix(".md"))
@@ -552,13 +646,13 @@ def build_parser() -> argparse.ArgumentParser:
     pe.add_argument(
         "--no-llm-explainer",
         action="store_true",
-        help="ml-agent only: skip OpenRouter SHAP narrative (metrics unchanged; faster / no API key)",
+        help="ml-agent: skip LLM explainer (metrics unchanged). zeroshot: still classifies all rows but omits narrative samples from the JSON report.",
     )
     pe.add_argument(
         "--explain-max-rows",
         type=int,
         default=25,
-        help="ml-agent: how many leading rows get an LLM explainer after metrics (default 25)",
+        help="Leading rows with full narrative samples in the JSON report (ml-agent LLM explainer or zeroshot block; default 25)",
     )
     pe.add_argument("--seed", type=int, default=43, help="Subsampling random seed")
     pe.add_argument(
@@ -637,6 +731,93 @@ def build_parser() -> argparse.ArgumentParser:
     pt.add_argument("--skip-xgb", action="store_true", help="Train Random Forest only")
     pt.set_defaults(func=cmd_train)
 
+    px = sub.add_parser(
+        "export-test-split",
+        help=(
+            "Export the notebook-aligned test fold (StratifiedGroupKFold first fold, Flow ID groups, seed 43 default) "
+            "as a CSV for evaluate — raw features + Label, same as ml_classifier.ipynb"
+        ),
+    )
+    px.add_argument(
+        "--data-dir",
+        type=str,
+        default="data",
+        help="Directory with the four class CSVs (same as train)",
+    )
+    px.add_argument(
+        "--output",
+        "-o",
+        type=str,
+        default="data/test_split_eval.csv",
+        help="Where to write the test CSV",
+    )
+    px.add_argument(
+        "--models-dir",
+        type=str,
+        default="models",
+        help="If feature_cols.joblib exists here, verify columns match preprocessing (skip with --no-check-models)",
+    )
+    px.add_argument(
+        "--no-check-models",
+        action="store_true",
+        help="Do not compare columns to models/feature_cols.joblib",
+    )
+    px.add_argument(
+        "--seed",
+        type=int,
+        default=43,
+        help="Random seed for StratifiedGroupKFold (must match train / notebook RANDOM_STATE)",
+    )
+    px.add_argument(
+        "--sgkf-splits",
+        type=int,
+        default=4,
+        help="StratifiedGroupKFold n_splits (must match train)",
+    )
+    px.add_argument(
+        "--dos-tcp-rows",
+        type=int,
+        default=100_000,
+        help="Max rows read from DoS TCP Flood.csv (must match train --dos-tcp-rows)",
+    )
+    px.set_defaults(func=cmd_export_test_split)
+
+    pb = sub.add_parser(
+        "sample-eval-subset",
+        help=(
+            "Stratified sample N rows per label from a labeled CSV (e.g. test_split_eval.csv) "
+            "for cheaper evaluate runs (default 1000/class → 4k rows)"
+        ),
+    )
+    pb.add_argument(
+        "--input",
+        "-i",
+        type=str,
+        default="data/test_split_eval.csv",
+        help="Labeled CSV (must include Label + all feature_cols)",
+    )
+    pb.add_argument(
+        "--output",
+        "-o",
+        type=str,
+        default="data/eval_balanced_4k.csv",
+        help="Where to write the stratified subset",
+    )
+    pb.add_argument(
+        "--per-class",
+        type=int,
+        default=1000,
+        help="Rows to sample per class (default 1000 × 4 labels = 4000)",
+    )
+    pb.add_argument("--models-dir", type=str, default="models")
+    pb.add_argument("--seed", type=int, default=43)
+    pb.add_argument(
+        "--no-meta",
+        action="store_true",
+        help="Do not write output.meta.json next to the CSV",
+    )
+    pb.set_defaults(func=cmd_sample_eval_subset)
+
     pp = sub.add_parser(
         "pipeline",
         help="Full chain: optional train, classify one flow (with `why` explanations), optional CSV eval",
@@ -677,13 +858,13 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument(
         "--no-llm-explainer",
         action="store_true",
-        help="evaluate step (ml-agent): skip OpenRouter SHAP narrative",
+        help="evaluate step: ml-agent skips LLM narrative; zeroshot omits narrative samples from report",
     )
     pp.add_argument(
         "--explain-max-rows",
         type=int,
         default=25,
-        help="evaluate step (ml-agent): max rows for LLM explainer after metrics",
+        help="evaluate step: max rows kept as narrative samples (ml-agent LLM explainer or zeroshot JSON block)",
     )
     pp.add_argument(
         "--pipeline-output",

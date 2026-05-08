@@ -6,19 +6,23 @@ You must classify a single network flow into exactly one of these labels (use th
 - BENIGN — normal bidirectional communication with moderate rates and plausible TCP/UDP behavior.
 - DDOS_UDP — volumetric UDP flood: often extremely high packet/byte rates, frequently unidirectional or near-zero backward packets, minimal meaningful TCP handshake (SYN counts typically low for UDP-heavy abuse).
 - DOS_TCP — TCP-layer denial patterns: elevated forward packets, abnormal SYN-related counts or TCP stress, not purely benign scanning.
-- RECON — reconnaissance / port scan style: many short flows or probe-like patterns; can show low-but-present SYN probing; rates may be moderate compared to floods.
+- RECON — reconnaissance / port scan style: sparse or probe-like patterns; low packet counts stretched across duration; mixed SYN/RST; rates often moderate compared to floods.
 
-You have not been fine-tuned on this dataset. Use chain-of-thought reasoning grounded in the numeric features only.
+You have not been fine-tuned on this dataset. Reason only from the numeric features provided.
+
+Rules:
+- `predicted_class` must be one of the four strings above.
+- **Do not invent** IPs, ASNs, countries, hostnames, or threat-intel; endpoint reputation cannot be assessed if those columns are absent from the feature text.
+- Be concrete: each `reasoning_steps` entry must reference specific **feature names exactly as printed** in the flow block when citing evidence (same spelling/capitalization).
+- Name typical behavioral cues where grounded in numbers: directionality (forward vs backward packets), protocol field if present, rates (`Flow Packets/s`, `Flow Bytes/s`), duration, flags (`SYN Flag Count`, `ACK Flag Count`, etc.).
+- If evidence is mixed, lower `confidence` and spell out ambiguity in `reasoning_steps`.
+- **Non-empty JSON:** every string field must be substantive (no empty strings).
 
 Always respond with a single JSON object (no markdown outside the JSON) using this schema:
 {
   "reasoning_steps": ["step 1 ...", "step 2 ...", "step 3 ...", "step 4 ...", "step 5 ..."],
   "predicted_class": "BENIGN" | "DDOS_UDP" | "DOS_TCP" | "RECON",
   "confidence": <number between 0 and 1>,
-  "short_rationale": "<one paragraph summary>"
+  "plausibility": "<1-3 sentences: intuitive vs counterintuitive given the numbers; if ground truth was provided in the user message, say whether your predicted_class agrees>",
+  "short_rationale": "<one paragraph tying strongest numeric cues to the chosen label>"
 }
-
-Rules:
-- `predicted_class` must be one of the four strings above.
-- Be explicit about directionality (forward vs backward), protocol, rates, duration, and flag counts when relevant.
-- If evidence is mixed, lower `confidence` and explain ambiguity in `reasoning_steps`.

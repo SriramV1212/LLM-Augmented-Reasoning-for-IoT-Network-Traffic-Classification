@@ -75,14 +75,17 @@ python cli.py classify -i flow.json --skip-llm
 # LLM-only classification + rationale
 python cli.py classify -i flow.json --mode zeroshot --model tencent/hy3-preview:free
 
-# Evaluate ML vs labels; default also runs OpenRouter SHAP explainer on first 25 rows (needs API key)
+# Evaluate ML vs labels; default also runs OpenRouter LLM explainer on first 25 rows (needs API key)
 python cli.py evaluate -d path/to/test.csv -o eval_report.json --max-rows 500 --mode ml-agent
 
 # ML metrics only (no OpenRouter calls for explainer)
 python cli.py evaluate -d path/to/test.csv -o eval_report.json --mode ml-agent --no-llm-explainer
 
-# Evaluate zero-shot LLM vs labels (one API call per row; needs key)
-python cli.py evaluate -d path/to/test.csv -o eval_report.json --max-rows 50 --mode zeroshot
+# Evaluate zero-shot LLM vs labels (one API call per row; needs key). JSON includes zeroshot_llm_explainer_samples for first --explain-max-rows rows.
+python cli.py evaluate -d path/to/test.csv -o eval_report.json --max-rows 50 --mode zeroshot --explain-max-rows 10
+
+# Zeroshot metrics on all rows but omit narrative sample block from JSON
+python cli.py evaluate -d path/to/test.csv -o eval_report.json --mode zeroshot --no-llm-explainer
 
 # Verbose OpenRouter logs (request URL/model, timings, message previews → stderr)
 python cli.py classify -i flow.json -v
@@ -100,7 +103,7 @@ python cli.py pipeline --train --input flow.json --eval-dataset path/to/test.csv
 python cli.py pipeline -i flow.json   # classify only; prints JSON (includes `why`)
 ```
 
-`classify` returns JSON with **`classification_mode`**, **`final_prediction`**, **`zeroshot`** and **`ml_agent`** (one is always `null`), and **`why`** (unit-of-analysis, structured evidence, **`narrative`**). In **`ml_agent`**, the LLM explainer fills **`why.ml_agent.plausibility_llm`** (intuitive vs counterintuitive, SOC-style) plus **`llm_explanation`** / **`security_takeaway_llm`**, grounded in SHAP and serialized flow stats — not invented IPs or geolocation (this CIC tabular export has no IP columns).
+`classify` returns JSON with **`classification_mode`**, **`final_prediction`**, **`zeroshot`** and **`ml_agent`** (one is always `null`), and **`why`** (unit-of-analysis, structured evidence, **`narrative`**). In **`ml_agent`**, the LLM fills **`why.ml_agent.plausibility_llm`**, **`llm_explanation`**, and **`security_takeaway_llm`** from serialized flow stats (SHAP may appear separately in **`rule_based_summary`**). In **`zeroshot`**, **`why.zeroshot.plausibility_llm`** plus **`reasoning_steps`** / **`short_rationale`** come from the LLM only — cite numeric features; do not invent IPs or geolocation (this CIC tabular export has no IP columns).
 
 ## Python API (sketch)
 
@@ -123,7 +126,7 @@ print(result.prediction.predicted_class, result.explanation)
 |------|------|
 | `llm_agent/` | Library code (OpenRouter client, ML path, zero-shot, merger, evaluator) |
 | `prompts/` | Editable system/user templates |
-| `cli.py` | Entry point (`classify`, `evaluate`, `train`, `pipeline`, `sample-flow`, `list-models`) |
+| `cli.py` | Entry point (`classify`, `evaluate`, `train`, `export-test-split`, `sample-eval-subset`, `pipeline`, `sample-flow`, `list-models`) |
 | `llm_agent/flow_explanation.py` | Builds `why` / narrative for a classification |
 | `models/` | `random_forest.joblib`, `xgboost.json`, encoders, `feature_cols.joblib` (from `train` or checked-in) |
 | `data/` | Optional local folder for the four training CSVs (often gitignored) |
@@ -142,6 +145,60 @@ python3 scripts/download_kaggle_data.py --data-dir data
 
 This pulls [CIC-BCCC-NRC-TabularIoTAttacks-2024](https://www.kaggle.com/datasets/kabeleswarpe/cic-bccc-nrc-tabulariotattacks-2024) and copies the four files expected under `data/`. If filenames in the archive differ, the script prints what it found so you can rename manually.
 
+### Full notebook test split (`export-test-split`)
+
+Training and `ml_classifier.ipynb` use **`StratifiedGroupKFold(n_splits=4, shuffle=True, random_state=43)`** grouped by **`Flow ID`** (first fold = ~25% held-out test). To evaluate **the same test rows** as the RF/XGB notebooks:
+
+1. Train (or ensure `models/feature_cols.joblib` matches your preprocessing):
+
+```bash
+python3 cli.py train --data-dir data --output-dir models --seed 43 --dos-tcp-rows 100000
+```
+
+2. Export raw **test-fold** rows (**no** log-normalization — `evaluate` applies `log1p` internally like training):
+
+```bash
+python3 cli.py export-test-split --data-dir data -o data/test_split_eval.csv --models-dir models
+```
+
+This writes `data/test_split_eval.csv` plus `data/test_split_eval.meta.json` (row counts and split parameters). **`--dos-tcp-rows`, `--seed`, and `--sgkf-splits` must match `train`** or the indices will not match your saved models.
+
+3. **Recommended: balanced 4k subset** (1000 rows per class) for evaluations — avoids ~155k-row runs:
+
+```bash
+python3 cli.py sample-eval-subset -i data/test_split_eval.csv -o data/eval_balanced_4k.csv --per-class 1000
+# or: python3 scripts/sample_eval_subset.py
+
+python3 cli.py evaluate -d data/eval_balanced_4k.csv -o data/eval_ml_4k_metrics.json \
+  --mode ml-agent --no-llm-explainer
+python3 cli.py evaluate -d data/eval_balanced_4k.csv -o data/eval_ml_4k_explainer.json \
+  --mode ml-agent --explain-max-rows 500 --model YOUR_MODEL
+
+python3 cli.py evaluate -d data/eval_balanced_4k.csv -o data/eval_zs_4k_metrics.json \
+  --mode zeroshot --no-llm-explainer --model YOUR_MODEL
+python3 cli.py evaluate -d data/eval_balanced_4k.csv -o data/eval_zs_4k_narratives.json \
+  --mode zeroshot --explain-max-rows 100 --model YOUR_MODEL
+```
+
+`sample-eval-subset` writes `*.meta.json` with how many rows were available/sampled per label if a class has fewer than `--per-class` rows in the input CSV.
+
+4. **Optional: full notebook test CSV** (~155k rows) — ML metrics-only is fine; zero-shot / LLM explainer on every row is usually impractical:
+
+```bash
+python3 cli.py evaluate -d data/test_split_eval.csv -o data/eval_full_ml_metrics.json \
+  --mode ml-agent --no-llm-explainer
+```
+
+Equivalent export script: `python3 scripts/export_test_split.py --data-dir data -o data/test_split_eval.csv`.
+
+**Batch / background:** `scripts/run_eval_suite.sh` **sources repo `.env`** (so `nohup` still sees `OPENROUTER_API_KEY` / `OPENROUTER_DEFAULT_MODEL`), then chains export → `sample-eval-subset` → ML + zero-shot `evaluate` (override via env vars in the script header). Example:
+
+```bash
+mkdir -p logs
+nohup bash scripts/run_eval_suite.sh >> logs/eval_suite.log 2>&1 &
+tail -f logs/eval_suite.log
+```
+
 ### Build a small labeled test CSV and run `evaluate`
 
 From the four `data/*.csv` files and `models/feature_cols.joblib`:
@@ -151,7 +208,7 @@ python3 scripts/make_eval_sample.py --per-class 500 -o data/eval_sample.csv
 python3 cli.py evaluate -d data/eval_sample.csv -o data/eval_report.json --mode ml-agent
 ```
 
-`--per-class` is only for **`make_eval_sample.py`** (rows per label in the built CSV). **`evaluate`** uses **`--max-rows`** to randomly subsample rows after loading that CSV (not per-class). In **`ml-agent`** mode, metrics use **all** loaded rows; the JSON report also includes **`ml_agent_llm_explainer_samples`** for the first **`--explain-max-rows`** rows (default 25) when **`OPENROUTER_API_KEY`** is set. Use **`--no-llm-explainer`** for metrics-only without API calls. For zero-shot LLM metrics (slow, needs API key): `--mode zeroshot --max-rows 20`.
+`--per-class` is only for **`make_eval_sample.py`** (rows per label in the built CSV). **`evaluate`** uses **`--max-rows`** to randomly subsample rows after loading that CSV (not per-class). In **`ml-agent`** mode, metrics use **all** loaded rows; the JSON report also includes **`ml_agent_llm_explainer_samples`** for the first **`--explain-max-rows`** rows (default 25) when **`OPENROUTER_API_KEY`** is set. Use **`--no-llm-explainer`** for ML metrics-only without explainer API calls. For **`zeroshot`**, metrics still run one LLM call per row; **`zeroshot_llm_explainer_samples`** captures rich narratives for the first **`--explain-max-rows`** rows (omit that block with **`--no-llm-explainer`**). Example: `--mode zeroshot --max-rows 20`.
 
 ## Notes
 

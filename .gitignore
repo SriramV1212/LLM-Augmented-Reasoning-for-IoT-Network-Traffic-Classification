@@ -16,5 +16,14 @@ venv/
 *.zip
 *.gz
 
+# Generated evaluation / split outputs (data/ — keep raw class CSVs tracked only if force-added)
+data/eval_*.json
+data/eval_*.md
+data/eval_balanced_4k.*
+data/test_split_eval.*
+
+# Batch / nohup logs
+logs/
+
 # Claude Code
 .claude/

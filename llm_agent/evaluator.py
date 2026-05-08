@@ -38,9 +38,11 @@ class EvalSummary:
     zeroshot_classification_report: Optional[Dict[str, Any]]
     zeroshot_confusion_matrix: Optional[List[List[int]]]
     labels: List[str]
-    # ml_agent: optional OpenRouter SHAP explainer (first K rows; metrics use all rows)
+    # ml_agent: optional LLM narrative samples (first K rows; metrics use all rows)
     ml_agent_llm_explainer_samples: Optional[List[Dict[str, Any]]] = None
     ml_agent_llm_explainer_note: Optional[str] = None
+    zeroshot_llm_explainer_samples: Optional[List[Dict[str, Any]]] = None
+    zeroshot_llm_explainer_note: Optional[str] = None
 
     def to_json_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -58,14 +60,15 @@ def evaluate_csv(
     llm_model: Optional[str] = None,
     llm_explainer: bool = True,
     explain_max_rows: int = 25,
+    store_eval_samples: bool = True,
 ) -> EvalSummary:
     """
     Evaluate on a CSV containing all `feature_cols` plus a `Label` column.
 
     - ``ml_agent``: ML predictions vs labels on **all** rows. By default, also runs the
-      **OpenRouter SHAP explainer** (same as ``classify`` without ``--skip-llm``) on the
-      first ``explain_max_rows`` rows only (set ``llm_explainer=False`` to skip).
-    - ``zeroshot``: one OpenRouter call per row — slow and costly.
+      **OpenRouter LLM explainer** on the first ``explain_max_rows`` rows only
+      (set ``llm_explainer=False`` to skip API calls for narratives).
+    - ``zeroshot``: one OpenRouter call per row — slow and costly. Optionally keeps narrative samples for the first ``explain_max_rows`` rows (when ``store_eval_samples``).
     """
     csv_path = Path(csv_path)
     if not csv_path.is_file():
@@ -146,7 +149,7 @@ def evaluate_csv(
                             }
                         )
                     expl_note = (
-                        f"OpenRouter SHAP explainer on first {limit} row(s); "
+                        f"OpenRouter LLM explainer on first {limit} row(s); "
                         f"metrics use all {len(rows)} rows."
                     )
 
@@ -164,17 +167,61 @@ def evaluate_csv(
             labels=labels_sorted,
             ml_agent_llm_explainer_samples=expl_samples,
             ml_agent_llm_explainer_note=expl_note,
+            zeroshot_llm_explainer_samples=None,
+            zeroshot_llm_explainer_note=None,
         )
 
     # zeroshot
     if client is None:
         raise ValueError("zeroshot evaluation requires an OpenRouterClient")
-    preds_z: List[str] = []
-    for rec in rows:
-        zs = classify_flow_zero_shot(
-            rec, artifacts.feature_cols, client, config, model=llm_model
+
+    sample_limit = 0
+    if store_eval_samples:
+        sample_limit = min(len(rows), max(0, explain_max_rows))
+
+    zs_samples: Optional[List[Dict[str, Any]]] = None
+    zs_note: Optional[str] = None
+    if not store_eval_samples:
+        zs_note = (
+            "Zero-shot narrative samples omitted (store_eval_samples=False / CLI --no-llm-explainer)."
         )
-        preds_z.append(zs.predicted_class)
+    elif sample_limit == 0:
+        zs_note = "Zero-shot narrative samples skipped: explain_max_rows is 0."
+    else:
+        zs_samples = []
+
+    preds_z: List[str] = []
+    for i, rec in enumerate(rows):
+        gt_ctx = y_true[i] if zs_samples is not None and i < sample_limit else None
+        zs_one = classify_flow_zero_shot(
+            rec,
+            artifacts.feature_cols,
+            client,
+            config,
+            model=llm_model,
+            ground_truth=gt_ctx,
+        )
+        preds_z.append(zs_one.predicted_class)
+        if zs_samples is not None and i < sample_limit:
+            zs_samples.append(
+                {
+                    "row_index": i,
+                    "true_label": y_true[i],
+                    "zeroshot_prediction": zs_one.predicted_class,
+                    "confidence": zs_one.confidence,
+                    "llm_model": zs_one.model,
+                    "plausibility": zs_one.plausibility,
+                    "reasoning_steps": zs_one.reasoning_steps,
+                    "short_rationale": zs_one.short_rationale,
+                }
+            )
+
+    if zs_samples is not None and zs_note is None:
+        zs_note = (
+            f"Zero-shot LLM narratives on first {sample_limit} row(s); "
+            f"metrics use all {len(rows)} rows."
+        )
+
     labels_sorted = sorted(set(y_true) | set(preds_z))
     acc_z = float(accuracy_score(y_true, preds_z))
     f1_z = float(f1_score(y_true, preds_z, average="macro", labels=labels_sorted, zero_division=0))
@@ -196,6 +243,8 @@ def evaluate_csv(
         labels=labels_sorted,
         ml_agent_llm_explainer_samples=None,
         ml_agent_llm_explainer_note=None,
+        zeroshot_llm_explainer_samples=zs_samples,
+        zeroshot_llm_explainer_note=zs_note,
     )
 
 
@@ -222,6 +271,12 @@ def write_eval_artifacts(summary: EvalSummary, out_json: Path, out_md: Path) -> 
         lines.append(
             f"- LLM explainer samples: **{len(summary.ml_agent_llm_explainer_samples)}** (see JSON)"
         )
+    if summary.zeroshot_llm_explainer_note:
+        lines.append(f"- Zero-shot narratives: {summary.zeroshot_llm_explainer_note}")
+    if summary.zeroshot_llm_explainer_samples:
+        lines.append(
+            f"- Zero-shot narrative samples: **{len(summary.zeroshot_llm_explainer_samples)}** (see JSON)"
+        )
     lines.extend(["", "## Labels (evaluation order)", "", ", ".join(summary.labels)])
     out_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -243,7 +298,12 @@ def evaluate_flow_pair_for_debug(
     artifacts = load_ml_models(Path(config.models_dir))
     if classification_mode == "zeroshot":
         zs = classify_flow_zero_shot(
-            feature_dict, artifacts.feature_cols, client, config, model=llm_model
+            feature_dict,
+            artifacts.feature_cols,
+            client,
+            config,
+            model=llm_model,
+            ground_truth=ground_truth,
         )
         merged = merge_results(
             flow_id=flow_id,

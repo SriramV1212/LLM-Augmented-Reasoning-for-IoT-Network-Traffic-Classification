@@ -38,6 +38,7 @@ def build_merged_why(
         zeroshot_block = {
             "predicted_class": zs.predicted_class,
             "confidence": zs.confidence,
+            "plausibility_llm": zs.plausibility,
             "reasoning_steps": zs.reasoning_steps,
             "short_rationale": zs.short_rationale,
         }
@@ -75,6 +76,8 @@ def build_merged_why(
         narrative_parts.append(
             f"Mode: **{mode_label}**. No label was produced. {run_notes}".strip()
         )
+    if zs is not None and zs.plausibility:
+        narrative_parts.append(f"Plausibility: {zs.plausibility}")
     if zs is not None and zs.short_rationale:
         narrative_parts.append(f"LLM rationale: {zs.short_rationale}")
     if tb is not None and tb.rule_based_summary:

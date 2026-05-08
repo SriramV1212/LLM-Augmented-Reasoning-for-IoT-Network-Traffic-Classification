@@ -13,6 +13,7 @@ import xgboost as xgb
 from sklearn.ensemble import RandomForestClassifier
 
 from llm_agent.config import AgentConfig
+from llm_agent.feature_evidence import flow_evidence_markdown, mentions_top_feature_names, top_raw_pairs
 from llm_agent.feature_serializer import build_feature_matrix_row, serialize_flow_features
 from llm_agent.llm_json import extract_json_object
 from llm_agent.openrouter_client import OpenRouterClient
@@ -232,45 +233,12 @@ def compute_shap_for_prediction(
     return out
 
 
-def _top_raw_feature_lines(
-    raw_lookup: Mapping[str, float],
-    *,
-    top_k: int = 5,
-) -> List[Tuple[str, float]]:
-    pairs = [(k, float(v)) for k, v in raw_lookup.items()]
-    pairs.sort(key=lambda kv: abs(kv[1]), reverse=True)
-    return pairs[:top_k]
-
-
-def _concrete_feature_evidence_block(
-    prediction: MLPrediction,
-    raw_lookup: Mapping[str, float],
-    *,
-    top_k: int = 5,
-) -> str:
-    """Deterministic raw-feature evidence block (no SHAP dependency)."""
-    lines = [
-        f"**Flow evidence for predicted class `{prediction.predicted_class}`** "
-        f"(confidence {prediction.confidence:.1%}; raw CICFlowMeter units):"
-    ]
-    for name, value in _top_raw_feature_lines(raw_lookup, top_k=top_k):
-        lines.append(f"- **{name}**: raw ≈ {value:.6g}.")
-    return "\n".join(lines)
-
-
-def _mentions_top_features(text: str, raw_lookup: Mapping[str, float], *, k: int = 2) -> bool:
-    if not text:
-        return False
-    top_names = [name for name, _ in _top_raw_feature_lines(raw_lookup, top_k=k)]
-    return all(name in text for name in top_names)
-
-
 def _default_plausibility_sentence(
     prediction: MLPrediction,
     raw_lookup: Mapping[str, float],
     ground_truth: Optional[str],
 ) -> str:
-    top = _top_raw_feature_lines(raw_lookup, top_k=1)
+    top = top_raw_pairs(raw_lookup, top_k=1)
     if not top:
         return f"Model chose **{prediction.predicted_class}** at {prediction.confidence:.1%} from flow statistics."
     fname, raw0 = top[0]
@@ -289,7 +257,7 @@ def _default_takeaway_sentence(
     prediction: MLPrediction,
     raw_lookup: Mapping[str, float],
 ) -> str:
-    top = _top_raw_feature_lines(raw_lookup, top_k=3)
+    top = top_raw_pairs(raw_lookup, top_k=3)
     if not top:
         return f"Correlate alerts for **{prediction.predicted_class}** with flow-level volume and timing features."
     names = ", ".join(name for name, _ in top)
@@ -361,11 +329,16 @@ def generate_llm_explanation(
     if not expl:
         expl = (res.content or "").strip()
 
-    appendix = _concrete_feature_evidence_block(prediction, raw_feature_dict, top_k=5)
+    appendix = flow_evidence_markdown(
+        prediction.predicted_class,
+        prediction.confidence,
+        raw_feature_dict,
+        top_k=5,
+    )
     weak = len(expl) < 80 and len(plaus) < 40 and len(take) < 25
     if not expl:
         expl = appendix
-    elif weak or not _mentions_top_features(expl, raw_feature_dict, k=2):
+    elif weak or not mentions_top_feature_names(expl, raw_feature_dict, k=2):
         expl = f"{expl.rstrip()}\n\n{appendix}".strip()
     if not plaus:
         plaus = _default_plausibility_sentence(prediction, raw_feature_dict, ground_truth)
